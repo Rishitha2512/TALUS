@@ -437,7 +437,7 @@ try:
     overview_data = api_get("/mine/overview").get("sectors", [])
 except Exception as exc:
     st.error(f"Failed to retrieve mine sectors: {exc}")
-    st.stop()0
+    st.stop()
 
 # =============================================================================
 # MODULE 1: COMMAND CENTER (Executive Summary, 3D Pit Mesh, Model Specs)
