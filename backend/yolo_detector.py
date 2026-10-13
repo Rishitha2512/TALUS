@@ -31,12 +31,22 @@ def detect_mine_hazards(image_bytes: bytes) -> Dict[str, Any]:
     Detects equipment, workers, and simulates geotechnical hazard tags
     (tension cracks, rockfall boulders, water seeps) based on visual features.
     """
+    import torch
+    torch.set_num_threads(1)
     model = get_yolo_model()
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    img.thumbnail((640, 640))
     w, h = img.size
     
-    # Run YOLO detection
-    results = model(img, conf=0.25, verbose=False)
+    # Bound CPU and working memory for small cloud instances.
+    results = model(
+        img,
+        conf=0.25,
+        verbose=False,
+        imgsz=320,
+        device="cpu",
+        max_det=50,
+    )
     boxes_out = []
     detected_classes = []
     
