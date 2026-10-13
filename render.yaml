@@ -6,6 +6,18 @@ services:
     plan: free
     healthCheckPath: /health
     envVars:
+      - key: TALUS_DATABASE_URL
+        fromDatabase:
+          name: talus-db
+          property: connectionString
+      - key: TALUS_AUTH_ENABLED
+        value: "true"
+      - key: TALUS_AUTH_SECRET
+        generateValue: true
+      - key: TALUS_ADMIN_USERNAME
+        value: admin
+      - key: TALUS_ADMIN_PASSWORD
+        sync: false
       - key: TALUS_CORS_ORIGINS
         value: "*"
       - key: TALUS_YOLO_ENABLED
@@ -18,3 +30,8 @@ services:
     envVars:
       - key: TALUS_API_URL
         value: https://talus-api.onrender.com
+databases:
+  - name: talus-db
+    databaseName: talus
+    user: talus
+    plan: free

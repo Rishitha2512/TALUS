@@ -3,7 +3,7 @@
 All outputs are prototype decision-support artifacts based on synthetic data.
 """
 from __future__ import annotations
-import io, json, math, os, sqlite3, time
+import io, json, math, time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -16,18 +16,18 @@ from sklearn.metrics import accuracy_score, confusion_matrix, classification_rep
 import joblib
 
 ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = Path(os.getenv("TALUS_DB_PATH", ROOT / "database" / "talus.db"))
 IMAGE_FEATURES = ROOT / "data" / "processed" / "image_features.csv"
 IMAGE_ROOT = ROOT / "data" / "raw" / "images"
 MATERIAL_MODEL = ROOT / "models" / "material_classifier.joblib"
 MATERIAL_FEATURES = ["mean_r", "mean_g", "mean_b", "brightness", "contrast", "saturation", "hue", "entropy", "edge_density", "sharpness", "glcm_contrast", "glcm_homogeneity", "glcm_energy", "glcm_correlation"]
 
 
+from backend.database import get_db_connection
+
+
 def connection():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(DB_PATH, timeout=10)
-    c.row_factory = sqlite3.Row
-    return c
+    """Use the configured shared SQLite or PostgreSQL persistence backend."""
+    return get_db_connection()
 
 
 def init_alerts():
@@ -57,8 +57,9 @@ def create_alert_with_status(sector: str, level: int, reason: str, demo: bool = 
             created = datetime.fromisoformat(existing["created_at"])
             if datetime.now() - created < timedelta(minutes=2):
                 return dict(existing), False
-        cur = c.execute("INSERT INTO alerts(sector,level,reason,created_at,demo) VALUES(?,?,?,?,?)", (sector, level, reason, now, int(demo)))
-        alert = dict(c.execute("SELECT * FROM alerts WHERE id=?", (cur.lastrowid,)).fetchone())
+        cur = c.execute("INSERT INTO alerts(sector,level,reason,created_at,demo) VALUES(?,?,?,?,?) RETURNING id", (sector, level, reason, now, int(demo)))
+        alert_id = cur.fetchone()["id"]
+        alert = dict(c.execute("SELECT * FROM alerts WHERE id=?", (alert_id,)).fetchone())
         return alert, True
 
 

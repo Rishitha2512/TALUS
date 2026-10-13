@@ -1,0 +1,62 @@
+{
+  "dataset_type": "DEMO/SYNTHETIC",
+  "records_in_file": 1200,
+  "records_audited": 1200,
+  "records_excluded_for_missing_inputs": 0,
+  "noise_free_rule": "0.35*(1.5/max(0.4,FoS)) + 0.30*(deformation_mm_day/15) + 0.20*(pore_pressure_kPa/120) + 0.15*(blast_intensity/10 if recent_blasting else 0)",
+  "thresholds": [
+    0.65,
+    1.05,
+    1.55
+  ],
+  "class_names": [
+    "Low",
+    "Moderate",
+    "High",
+    "Critical"
+  ],
+  "generator_noise": {
+    "distribution": "Normal(0, 0.08)",
+    "stored_per_record": false,
+    "limitation": "The sampled per-record noise is not persisted, so it cannot be recovered from this CSV."
+  },
+  "noise_free_rule_agreement": {
+    "accuracy": 0.9041666666666667,
+    "macro_f1": 0.8557012197258838,
+    "confusion_matrix": [
+      [
+        21,
+        9,
+        0,
+        0
+      ],
+      [
+        6,
+        182,
+        23,
+        0
+      ],
+      [
+        0,
+        21,
+        352,
+        32
+      ],
+      [
+        0,
+        0,
+        24,
+        530
+      ]
+    ]
+  },
+  "score_inputs_also_used_as_model_features": [
+    "factor_of_safety",
+    "deformation_rate_mm_day",
+    "pore_pressure_kpa",
+    "blast_intensity",
+    "recent_blasting"
+  ],
+  "direct_input_overlap_count": 5,
+  "interpretation": "Agreement measures how often thresholding the documented score without random noise reproduces the stored synthetic class. It is a circularity diagnostic, not a model validation score and not real-mine performance."
+}

@@ -76,6 +76,8 @@ def test_pof_report_and_ttf_endpoints():
     assert pof.status_code == 200 and 0 <= pof.json()["probability_of_failure"] <= 1
     report = client.get("/report/S1.pdf")
     assert report.status_code == 200 and report.headers["content-type"] == "application/pdf"
+    shift_report = client.get("/shift-report.pdf")
+    assert shift_report.status_code == 200 and shift_report.headers["content-type"] == "application/pdf"
     ttf = client.get("/sector/S1/ttf")
     assert ttf.status_code == 200 and "available" in ttf.json()
 
@@ -108,6 +110,90 @@ def test_workers_geofence_and_advanced_simulation():
     assert recs.status_code == 200 and len(recs.json()["ranked_recommendations"]) > 0
     drift = client.get("/model/drift")
     assert drift.status_code == 200
+
+
+def test_research_phase_b_c_d_endpoints():
+    slices = [
+        {"weight_kn": 100, "base_angle_deg": 15, "width_m": 2, "cohesion_kpa": 20, "friction_angle_deg": 30, "pore_pressure_kpa": 5},
+        {"weight_kn": 120, "base_angle_deg": 25, "width_m": 2, "cohesion_kpa": 20, "friction_angle_deg": 30, "pore_pressure_kpa": 5},
+        {"weight_kn": 140, "base_angle_deg": 35, "width_m": 2, "cohesion_kpa": 20, "friction_angle_deg": 30, "pore_pressure_kpa": 5},
+    ]
+    limit_eq = client.post("/research/limit-equilibrium", json={"slices": slices})
+    assert limit_eq.status_code == 200
+    assert limit_eq.json()["bishop_simplified_fos"] > 0
+    assert limit_eq.json()["janbu_simplified_uncorrected_fos"] > 0
+
+    reliability = client.post(
+        "/research/reliability",
+        json={"factor_of_safety_mean": 1.2, "factor_of_safety_standard_deviation": 0.2, "sample_count": 1000},
+    )
+    assert reliability.status_code == 200
+    assert 0 <= reliability.json()["monte_carlo_probability_of_failure"] <= 1
+    assert reliability.json()["form_reliability_index_beta"] > 0
+
+    kinematics = client.post(
+        "/research/kinematics/planar",
+        json={"slope_dip_deg": 55, "slope_dip_direction_deg": 90, "joint_dip_deg": 35, "joint_dip_direction_deg": 100, "friction_angle_deg": 25},
+    )
+    assert kinematics.status_code == 200 and kinematics.json()["planar_feasible_screen"] is True
+
+    health = client.post(
+        "/research/sensor-health",
+        json={"values": [1, 2, 100], "expected_min": 0, "expected_max": 10},
+    )
+    assert health.status_code == 200 and health.json()["do_not_trust"] is True
+
+    monotonic = client.post(
+        "/research/monotonic-classifier",
+        json={
+            "features": [[0], [1], [2], [3]],
+            "labels": [0, 0, 1, 1],
+            "monotonic_constraints": [1],
+        },
+    )
+    assert monotonic.status_code == 200
+    assert monotonic.json()["coefficients_standardized"][0] >= 0
+
+    conformal = client.post(
+        "/research/conformal",
+        json={
+            "calibration_probabilities": [[0.9, 0.1], [0.2, 0.8], [0.8, 0.2], [0.1, 0.9]],
+            "calibration_labels": [0, 1, 0, 1],
+            "test_probabilities": [[0.8, 0.2]],
+            "test_labels": [0],
+            "alpha": 0.25,
+        },
+    )
+    assert conformal.status_code == 200
+    assert conformal.json()["empirical_test_coverage"] == 1.0
+
+    invalid = client.post("/research/limit-equilibrium", json={"slices": []})
+    assert invalid.status_code == 422
+
+
+def test_websocket_receives_generated_synthetic_sensor_records():
+    with client.websocket_connect("/ws/telemetry") as websocket:
+        assert websocket.receive_json()["type"] == "connected"
+        response = client.post(
+            "/simulate/telemetry",
+            json={"sector_id": "S1", "sample_count": 8, "seed": 7},
+        )
+        assert response.status_code == 200
+        generated = response.json()
+        assert generated["dataset_type"] == "DEMO/SYNTHETIC"
+        assert generated["readings_persisted"] == 8
+        event = websocket.receive_json()
+        assert event["type"] == "telemetry"
+        assert event["sector_id"] == "S1"
+        assert event["dataset_type"] == "DEMO/SYNTHETIC"
+
+
+def test_prometheus_metrics_exposes_request_counts_and_latency():
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "talus_http_requests_total" in response.text
+    assert "quantile=\"0.95\"" in response.text
+    assert response.headers.get("x-request-id")
 
 
 def test_yolo_free_tier_texture_screen(monkeypatch):

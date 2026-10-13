@@ -1,15 +1,40 @@
 services:
+  broker:
+    image: eclipse-mosquitto:2.0
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    expose:
+      - "1883"
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
     environment:
       TALUS_DB_PATH: /app/database/talus.db
+      TALUS_MQTT_URL: mqtt://broker:1883
+      TALUS_AUTH_ENABLED: ${TALUS_AUTH_ENABLED:-false}
+      TALUS_AUTH_SECRET: ${TALUS_AUTH_SECRET:-}
+      TALUS_ADMIN_USERNAME: ${TALUS_ADMIN_USERNAME:-admin}
+      TALUS_ADMIN_PASSWORD: ${TALUS_ADMIN_PASSWORD:-}
       TALUS_CORS_ORIGINS: "*"
     ports:
       - "8000:8000"
     volumes:
       - talus-db:/app/database
+    depends_on:
+      - broker
+  ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["python", "-m", "backend.ingestor"]
+    environment:
+      TALUS_DB_PATH: /app/database/talus.db
+      TALUS_MQTT_URL: mqtt://broker:1883
+    volumes:
+      - talus-db:/app/database
+    depends_on:
+      - broker
   frontend:
     build:
       context: .

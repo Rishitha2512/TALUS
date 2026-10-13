@@ -48,6 +48,30 @@ The extended benchmark selects the serving classifier by **mean stratified 5-fol
 
 These are offline metrics on the supplied **synthetic** dataset, not evidence of operational mine-site performance. See `results/ml_rigor_summary.json` for CV mean ± standard deviation, the factor-of-safety ablation, sector hold-out, per-class metrics and calibration score.
 
+## Phase A — data provenance and label circularity
+
+The repository's monitoring telemetry, “raw field” export, and rock/soil samples
+are generated synthetic data; the raw-field files are synthetic records with
+injected data-quality faults, not mine observations. Run
+`python scripts/audit_synthetic_labels.py` to regenerate the label-construction
+audit in `results/synthetic_label_audit.json` and its row-level companion CSV.
+For the checked-in 1,200-record synthetic dataset, the generating rule without
+its unrecorded random noise agrees with 90.4167% of labels (macro-F1 0.8557), and
+all five direct score inputs are model features. This is a circularity
+diagnostic, not validation of the classifier.
+
+No real mine FoS/risk-labelled external dataset has been evaluated, so no
+real-data accuracy or sim-to-real gap is reported. The NASA Global Landslide
+Catalog is documented as a candidate *event inventory* only; it does not contain
+the mine FoS/risk labels required for this model. Its historical export returned
+HTTP 404 in the Phase A environment and its redistribution licence was not
+verified. The guarded optional loader is `scripts/download_nasa_glc.py`; it does
+not bundle or fabricate records. Dataset provenance, known biases, access status,
+and exact audit interpretation are in [`docs/DATA_CARD.md`](docs/DATA_CARD.md).
+The dashboard's “Synthetic vs Real / Leakage Audit” module presents the same
+generated findings and explicitly reports that real external validation is
+unavailable.
+
 ## Local run
 
 ### 1. Install

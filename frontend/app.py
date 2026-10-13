@@ -230,7 +230,9 @@ def api_get(path: str) -> dict:
     return r.json()
 
 def api_post(path: str, payload: dict) -> dict:
-    r = requests.post(f"{API_URL}{path}", json=payload, timeout=25)
+    token = st.session_state.get("auth_token")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    r = requests.post(f"{API_URL}{path}", json=payload, headers=headers, timeout=25)
     r.raise_for_status()
     return r.json()
 
@@ -271,6 +273,10 @@ if "voice_feedback_text" not in st.session_state:
     st.session_state["voice_feedback_text"] = "TALUS Concall Connected. Ready for geotechnical questions or module navigation."
 if "selected_module" not in st.session_state:
     st.session_state["selected_module"] = "Command Center"
+if "auth_token" not in st.session_state:
+    st.session_state["auth_token"] = ""
+if "auth_role" not in st.session_state:
+    st.session_state["auth_role"] = ""
 if "chat_history" not in st.session_state:
     st.session_state["chat_history"] = [
         {"role": "ai", "text": "TALUS Autonomous Mine Safety Copilot online. How can I assist you with slope stability, live telemetry, worker safety, or emergency TARP today?"}
@@ -359,7 +365,10 @@ nav_items = [
     "Worker Safety & Risk Zones",
     "AI Vision & YOLO",
     "Adaptive ML & TTA",
-    "Emergency & TARP"
+    "Emergency & TARP",
+    "Synthetic vs Real / Leakage Audit",
+    "Live Sensor Stream",
+    "Engineering Research"
 ]
 
 # Sidebar Navigation with Clean Visual Icons
@@ -368,7 +377,34 @@ with st.sidebar:
     st.markdown("`TIER-1 CYBER-DEFENSE`")
     st.caption("PHYSICS-INFORMED OPEN-PIT DEFENSE")
     st.divider()
-    
+
+    if health_resp.get("auth_enabled"):
+        if st.session_state["auth_token"]:
+            st.caption(f"Signed in as {st.session_state['auth_role']}")
+            if st.button("Sign out", use_container_width=True):
+                st.session_state["auth_token"] = ""
+                st.session_state["auth_role"] = ""
+                st.rerun()
+        else:
+            with st.form("talus_login"):
+                login_name = st.text_input("Username")
+                login_password = st.text_input("Password", type="password")
+                submit_login = st.form_submit_button("Sign in", use_container_width=True)
+            if submit_login:
+                try:
+                    login_response = requests.post(
+                        f"{API_URL}/auth/login",
+                        json={"username": login_name, "password": login_password},
+                        timeout=15,
+                    )
+                    login_response.raise_for_status()
+                    login_data = login_response.json()
+                    st.session_state["auth_token"] = login_data["access_token"]
+                    st.session_state["auth_role"] = login_data["role"]
+                    st.rerun()
+                except requests.RequestException as exc:
+                    st.error(f"Sign-in failed: {exc}")
+
     current_idx = nav_items.index(st.session_state["selected_module"]) if st.session_state["selected_module"] in nav_items else 0
     nav = st.radio(
         "OPERATIONAL MODULES",
@@ -401,7 +437,7 @@ try:
     overview_data = api_get("/mine/overview").get("sectors", [])
 except Exception as exc:
     st.error(f"Failed to retrieve mine sectors: {exc}")
-    st.stop()
+    st.stop()0
 
 # =============================================================================
 # MODULE 1: COMMAND CENTER (Executive Summary, 3D Pit Mesh, Model Specs)
@@ -1237,6 +1273,314 @@ elif nav == "Emergency & TARP":
             st.rerun()
         except Exception as e:
             st.error(f"Chat error: {e}")
+
+# =============================================================================
+# PHASE A: DATA PROVENANCE, REAL-DATA STATUS & LABEL CIRCULARITY
+# =============================================================================
+elif nav == "Synthetic vs Real / Leakage Audit":
+    st.header("🧪 Synthetic vs Real Data & Label-Leakage Audit")
+    st.caption(
+        "Evidence currently available in this repository. Synthetic agreement is "
+        "not external validation or evidence of operational mine performance."
+    )
+    audit_path = ROOT / "results" / "synthetic_label_audit.json"
+    if not audit_path.is_file():
+        st.error(
+            "Synthetic audit artifact is missing. Run "
+            "`python scripts/audit_synthetic_labels.py` from the repository root."
+        )
+    else:
+        try:
+            audit = json.loads(audit_path.read_text(encoding="utf-8"))
+            audit_metrics = audit["noise_free_rule_agreement"]
+            metric_cols = st.columns(4)
+            metric_cols[0].metric(
+                "Noise-free rule agreement",
+                f"{audit_metrics['accuracy']:.1%}",
+                "On generated labels only",
+            )
+            metric_cols[1].metric(
+                "Noise-free macro-F1",
+                f"{audit_metrics['macro_f1']:.3f}",
+                "Circularity diagnostic only",
+            )
+            metric_cols[2].metric(
+                "Records audited",
+                f"{audit['records_audited']:,}",
+                "Synthetic dataset",
+            )
+            metric_cols[3].metric(
+                "Overlapping score inputs",
+                f"{audit['direct_input_overlap_count']}/5",
+                "Also present as model features",
+            )
+            st.warning(
+                "REAL EXTERNAL VALIDATION: NOT AVAILABLE. No real mine FoS/risk "
+                "labels are bundled or evaluated. Do not interpret the synthetic "
+                "metrics above as real-world model accuracy."
+            )
+            st.subheader("Synthetic label-generation rule")
+            st.code(
+                "score = 0.35*(1.5/max(0.4,FoS)) "
+                "+ 0.30*(deformation_mm_day/15) "
+                "+ 0.20*(pore_pressure_kPa/120) "
+                "+ 0.15*(blast_intensity/10 if recently blasted else 0) "
+                "+ Normal(0, 0.08)\n"
+                "Classes: Low < 0.65; Moderate < 1.05; High < 1.55; otherwise Critical",
+                language="text",
+            )
+            st.caption(
+                "How this works: the audit recomputes this generator score without "
+                "its sampled Gaussian noise, applies the original thresholds, and "
+                "compares those classes with the stored synthetic labels. "
+                "Assumption: the documented generator rule matches the version "
+                "that produced this CSV. Limitation: the per-row noise was not "
+                "saved, so agreement measures deterministic-rule alignment, not "
+                "recoverable noise or real-world validity."
+            )
+            confusion = pd.DataFrame(
+                audit_metrics["confusion_matrix"],
+                index=audit["class_names"],
+                columns=audit["class_names"],
+            )
+            confusion.index.name = "Actual synthetic class"
+            st.subheader("Noise-free rule vs stored synthetic label")
+            st.caption("Rows are stored labels; columns are noise-free rule classes.")
+            st.dataframe(confusion, use_container_width=True)
+            with st.expander("Per-record synthetic audit sample"):
+                rows_path = ROOT / "results" / "synthetic_label_audit_rows.csv"
+                if rows_path.is_file():
+                    st.dataframe(pd.read_csv(rows_path).head(50), use_container_width=True)
+                else:
+                    st.info("Per-record audit CSV is missing; rerun the audit script.")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            st.error(f"Could not read the generated synthetic audit results: {exc}")
+
+    st.subheader("External data status")
+    st.info(
+        "NASA Global Landslide Catalog is an event inventory, not mine FoS/risk "
+        "ground truth. Its historical export returned HTTP 404 during this audit, "
+        "and redistribution terms were not verified. No catalog sample or real-data "
+        "validation metrics are claimed. See `docs/DATA_CARD.md` and the guarded "
+        "loader `scripts/download_nasa_glc.py`."
+    )
+
+elif nav == "Live Sensor Stream":
+    st.header("Live Synthetic Sensor Stream")
+    st.warning(
+        "This live feed is driven by a local synthetic sensor simulator. "
+        "It does not connect to a mine instrument or emergency dispatch service."
+    )
+    st.caption(
+        "WebSocket updates appear in this panel as they arrive; telemetry is also "
+        "persisted with data-quality flags in the configured database."
+    )
+    api_url_json = json.dumps(API_URL)
+    st.components.v1.html(
+        f"""
+        <div style="font:14px sans-serif;background:#0d1422;color:#f8fafc;padding:16px;border-radius:10px">
+          <div style="display:flex;gap:10px;align-items:center">
+            <button id="connect" style="padding:8px 14px">Connect live feed</button>
+            <button id="simulate" style="padding:8px 14px">Generate synthetic sensor batch</button>
+            <span id="status">Disconnected</span>
+          </div>
+          <pre id="events" style="height:300px;overflow:auto;white-space:pre-wrap;margin-top:12px"></pre>
+        </div>
+        <script>
+          const api = {api_url_json};
+          const output = document.getElementById("events");
+          const status = document.getElementById("status");
+          let socket;
+          document.getElementById("connect").onclick = () => {{
+            const address = new URL(api);
+            address.protocol = address.protocol === "https:" ? "wss:" : "ws:";
+            address.pathname = "/ws/telemetry";
+            socket = new WebSocket(address.toString());
+            socket.onopen = () => status.textContent = "Connected";
+            socket.onclose = () => status.textContent = "Disconnected";
+            socket.onerror = () => status.textContent = "Stream connection error";
+            socket.onmessage = event => {{
+              const row = JSON.parse(event.data);
+              if (row.type === "telemetry") {{
+                output.textContent = JSON.stringify(row) + "\\n" + output.textContent;
+              }} else {{
+                status.textContent = row.type === "connected" ? "Connected (synthetic source)" : status.textContent;
+              }}
+            }};
+          }};
+          document.getElementById("simulate").onclick = async () => {{
+            status.textContent = "Generating...";
+            try {{
+              const response = await fetch(api + "/simulate/telemetry", {{
+                method: "POST", headers: {{"Content-Type":"application/json"}},
+                body: JSON.stringify({{sector_id:"S1",sample_count:30,seed:Date.now() % 100000}})
+              }});
+              if (!response.ok) throw new Error(await response.text());
+              const result = await response.json();
+              status.textContent = result.notice + " (" + result.readings_persisted + " stored)";
+            }} catch (error) {{ status.textContent = "Simulation failed: " + error; }}
+          }};
+        </script>
+        """,
+        height=400,
+        scrolling=False,
+    )
+    st.info(
+        "How this works: seeded displacement samples combine linear drift, normal "
+        "noise, injected outliers and dropouts; a WebSocket broadcasts the stored "
+        "records to connected clients. Assumptions: local simulator models one "
+        "displacement sensor. Limitations: not MQTT-ingested live field data, no "
+        "sensor calibration, and no verified failure labels."
+    )
+
+elif nav == "Engineering Research":
+    st.header("Engineering Research Workbench")
+    st.warning(
+        "Offline research/screening utilities only. Outputs are not mine-specific "
+        "design values, calibrated forecasts, or operating instructions."
+    )
+    tab_le, tab_prob, tab_hydro = st.tabs(
+        ["Limit equilibrium", "Uncertainty & alarms", "Rock mass & infiltration"]
+    )
+    with tab_le:
+        st.subheader("Bishop simplified and uncorrected Janbu")
+        st.caption(
+            "Input circular-slice records. Bishop solves moment equilibrium by "
+            "iteration; Janbu uses simplified force equilibrium without the "
+            "empirical correction factor."
+        )
+        default_slices = [
+            {"weight_kn": 100, "base_angle_deg": 15, "width_m": 2, "cohesion_kpa": 20, "friction_angle_deg": 30, "pore_pressure_kpa": 5},
+            {"weight_kn": 120, "base_angle_deg": 25, "width_m": 2, "cohesion_kpa": 20, "friction_angle_deg": 30, "pore_pressure_kpa": 5},
+            {"weight_kn": 140, "base_angle_deg": 35, "width_m": 2, "cohesion_kpa": 20, "friction_angle_deg": 30, "pore_pressure_kpa": 5},
+        ]
+        with st.form("research_limit_equilibrium"):
+            slices_text = st.text_area(
+                "Slice data (illustrative starting example)",
+                json.dumps(default_slices, indent=2),
+                height=210,
+            )
+            run_limit_eq = st.form_submit_button("Calculate slice FoS", type="primary")
+        if run_limit_eq:
+            try:
+                slice_data = json.loads(slices_text)
+                st.json(api_post("/research/limit-equilibrium", {"slices": slice_data}))
+            except Exception as exc:
+                st.error(f"Limit-equilibrium calculation failed: {exc}")
+        st.info(
+            "How this works: Bishop uses iterative m_alpha terms in overall "
+            "moment equilibrium; uncorrected Janbu uses a simplified "
+            "force-equilibrium expression. Assumption: 2D slices and user-entered "
+            "pore pressures. Limitation: no critical-circle search, interslice-force "
+            "solution, or published benchmark certification."
+        )
+
+    with tab_prob:
+        st.subheader("FoS uncertainty comparison")
+        st.caption("This comparison treats FoS as one normally distributed scalar; it does not propagate uncertainty through slope mechanics.")
+        with st.form("research_reliability"):
+            reliability_cols = st.columns(3)
+            fos_mean = reliability_cols[0].number_input("Mean FoS", 0.2, 5.0, 1.2, 0.05)
+            fos_std = reliability_cols[1].number_input("FoS standard deviation", 0.01, 2.0, 0.2, 0.01)
+            mc_samples = reliability_cols[2].selectbox("Monte Carlo samples", [1000, 5000, 10000, 50000], index=2)
+            run_reliability = st.form_submit_button("Compare Monte Carlo and FORM")
+        if run_reliability:
+            try:
+                st.json(api_post(
+                    "/research/reliability",
+                    {"factor_of_safety_mean": fos_mean, "factor_of_safety_standard_deviation": fos_std, "sample_count": mc_samples},
+                ))
+            except Exception as exc:
+                st.error(f"Reliability analysis failed: {exc}")
+        st.caption(
+            "How this works: Monte Carlo counts sampled FoS values below 1.0; "
+            "one-dimensional FORM computes the standardized distance to that "
+            "limit state. Assumption: a normal scalar FoS. Limitation: no spatial "
+            "random field or site-calibrated probability of failure."
+        )
+        with st.expander("Conformal sets, monotonic model, and abstention APIs"):
+            st.markdown(
+                "- `POST /research/conformal`: split-conformal sets use "
+                "`1 - p(true class)` calibration scores. Marginal coverage assumes "
+                "exchangeability; current TALUS data do not establish that assumption.\n"
+                "- `POST /research/abstention-curve`: reports accepted coverage "
+                "and selective accuracy at supplied confidence thresholds.\n"
+                "- `POST /research/monotonic-classifier`: binary logistic regression "
+                "projects signed feature coefficients to the supplied monotonic "
+                "constraints. The caller must select valid feature directions.\n"
+                "- `POST /research/physics-residual`: fits a ridge correction only "
+                "when the caller supplies independently observed FoS; no such real "
+                "observations are currently available in this repository."
+            )
+            st.caption(
+                "How this works: calibration uses a finite-sample conformal score "
+                "quantile; abstention excludes low-confidence rows; monotonic "
+                "logistic training constrains coefficient signs. Limitations: "
+                "these are research primitives, not the current serving model, "
+                "and their guarantees depend on data assumptions and inputs."
+            )
+        with st.expander("Alarm evaluation API"):
+            st.code(
+                'POST /research/alarm-metrics\\n'
+                '{"alarm_indices":[2,8],"event_indices":[5],'
+                '"observation_count":30,"samples_per_month":30}',
+                language="text",
+            )
+            st.caption(
+                "How this works: matches each alarm to the next unmatched future "
+                "event; reports event recall, mean lead samples, and false alarms "
+                "per month. Limitation: not walk-forward validation; no observed "
+                "failure chronology is available."
+            )
+
+    with tab_hydro:
+        st.subheader("Hoek-Brown equivalent Mohr-Coulomb fit")
+        with st.form("research_hoek_brown"):
+            hb_cols = st.columns(5)
+            hb_ucs = hb_cols[0].number_input("Intact UCS (MPa)", 0.1, 500.0, 100.0)
+            hb_mi = hb_cols[1].number_input("mi", 0.1, 50.0, 10.0)
+            hb_gsi = hb_cols[2].number_input("GSI", 0.0, 100.0, 65.0)
+            hb_d = hb_cols[3].number_input("Disturbance D", 0.0, 1.0, 0.2)
+            hb_sigma3 = hb_cols[4].number_input("Max confinement (MPa)", 0.1, 100.0, 2.0)
+            run_hb = st.form_submit_button("Fit equivalent Mohr-Coulomb")
+        if run_hb:
+            try:
+                st.json(api_post("/research/hoek-brown", {
+                    "intact_ucs_mpa": hb_ucs, "mi": hb_mi, "gsi": hb_gsi,
+                    "disturbance_factor": hb_d, "sigma3_max_mpa": hb_sigma3,
+                }))
+            except Exception as exc:
+                st.error(f"Hoek-Brown conversion failed: {exc}")
+        st.caption(
+            "How this works: computes the Hoek-Brown envelope and least-squares "
+            "fits a Mohr-Coulomb line up to the selected confinement. Assumption: "
+            "generalized Hoek-Brown parameters. Limitation: equivalent c-phi depend "
+            "on the stress range and are not a unique conversion."
+        )
+        st.subheader("Green-Ampt rainfall infiltration")
+        with st.form("research_infiltration"):
+            inf_cols = st.columns(5)
+            rain = inf_cols[0].number_input("Rainfall (mm)", 0.0, 500.0, 40.0)
+            duration = inf_cols[1].number_input("Duration (h)", 0.0, 72.0, 2.0)
+            conductivity = inf_cols[2].number_input("Ksat (mm/h)", 0.0, 1000.0, 5.0)
+            suction = inf_cols[3].number_input("Suction head (mm)", 0.0, 5000.0, 100.0)
+            moisture = inf_cols[4].number_input("Moisture deficit (0–1)", 0.0, 1.0, 0.2)
+            run_infiltration = st.form_submit_button("Estimate cumulative infiltration")
+        if run_infiltration:
+            try:
+                st.json(api_post("/research/infiltration", {
+                    "rainfall_mm": rain, "duration_hours": duration,
+                    "saturated_conductivity_mm_h": conductivity,
+                    "suction_head_mm": suction, "moisture_deficit": moisture,
+                }))
+            except Exception as exc:
+                st.error(f"Infiltration estimate failed: {exc}")
+        st.caption(
+            "How this works: explicit steps integrate Green-Ampt capacity and cap "
+            "infiltration at available rain. Assumptions: homogeneous soil and "
+            "ponded infiltration. Limitation: no runoff, layering, preferential "
+            "flow, or calibrated pore-pressure response."
+        )
 
 # Mandatory Disclaimer Footer
 st.markdown("""
