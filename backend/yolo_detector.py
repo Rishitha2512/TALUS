@@ -26,27 +26,32 @@ def get_yolo_model():
     return _yolo_model
 
 
-def detect_mine_hazards(image_bytes: bytes) -> Dict[str, Any]:
+def detect_mine_hazards(image_bytes: bytes, run_yolo: bool = True) -> Dict[str, Any]:
     """Runs YOLO inference on a mine bench image.
     Detects equipment, workers, and simulates geotechnical hazard tags
     (tension cracks, rockfall boulders, water seeps) based on visual features.
     """
-    import torch
-    torch.set_num_threads(1)
-    model = get_yolo_model()
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img.thumbnail((640, 640))
-    w, h = img.size
-    
-    # Bound CPU and working memory for small cloud instances.
-    results = model(
-        img,
-        conf=0.25,
-        verbose=False,
-        imgsz=320,
-        device="cpu",
-        max_det=50,
-    )
+    model = None
+    if run_yolo:
+        import torch
+        torch.set_num_threads(1)
+        model = get_yolo_model()
+        # Bound CPU and working memory for small cloud instances.
+        results = model(
+            img,
+            conf=0.25,
+            verbose=False,
+            imgsz=320,
+            device="cpu",
+            max_det=50,
+        )
+        engine = "YOLOv8n"
+    else:
+        results = ()
+        engine = "texture_screen"
+
     boxes_out = []
     detected_classes = []
     
@@ -131,7 +136,15 @@ def detect_mine_hazards(image_bytes: bytes) -> Dict[str, Any]:
     has_crack = any("Crack" in b["label"] for b in boxes_out)
     has_heavy = any(b["label"] == "Haul Truck" for b in boxes_out)
     
-    if has_worker and has_crack:
+    if not run_yolo:
+        safety_status = (
+            "TEXTURE SCREEN ONLY: Potential tension crack-like edges were found; "
+            "verify the image with a qualified reviewer."
+            if has_crack
+            else "TEXTURE SCREEN ONLY: No crack-like edges were identified. "
+            "Worker and equipment detection was not run."
+        )
+    elif has_worker and has_crack:
         safety_status = "CRITICAL HAZARD: Personnel located adjacent to structural tension crack!"
     elif has_crack:
         safety_status = "WARNING: Active tension crack observed on bench face."
@@ -145,5 +158,12 @@ def detect_mine_hazards(image_bytes: bytes) -> Dict[str, Any]:
         "detections": boxes_out,
         "detected_summary": list(set(detected_classes)),
         "safety_assessment": safety_status,
+        "detection_engine": engine,
+        "model_notice": (
+            "YOLOv8 is disabled for this deployment to keep the free instance responsive. "
+            "This result is a lightweight image-texture screen only; it does not detect people or equipment."
+            if not run_yolo
+            else None
+        ),
         "annotated_image_bytes": annotated_bytes
     }

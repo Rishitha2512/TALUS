@@ -324,7 +324,8 @@ async def yolo_detect_endpoint(file: UploadFile = File(...)):
     if len(raw) > 12 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Image must be 12 MB or smaller.")
     try:
-        result = detect_mine_hazards(raw)
+        run_yolo = os.getenv("TALUS_YOLO_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+        result = detect_mine_hazards(raw, run_yolo=run_yolo)
         annotated_b64 = base64.b64encode(result.pop("annotated_image_bytes")).decode("utf-8")
         result["annotated_image_base64"] = annotated_b64
         return result

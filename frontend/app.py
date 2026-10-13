@@ -1028,13 +1028,11 @@ elif nav == "Worker Safety & Risk Zones":
 # =============================================================================
 elif nav == "AI Vision & YOLO":
     st.header("📸 AI Vision & YOLOv8 Deep Learning Hazard Detector")
-    st.caption("Real-time open-pit bench inspection: detects workers in hazard zones, haul equipment surcharge, and structural tension cracks.")
+    st.caption("Demo image screening for open-pit benches. Always verify observations with a qualified geotechnical reviewer.")
     
-    # YOLO Model Card
     st.info("""
-    **⚡ COMPUTER VISION MODEL: ULTRALYTICS YOLOV8 NANO (OFFLINE EDGE INFERENCE)**  
-    - **Architecture:** YOLOv8n (3.2 Million Parameters) | **mAP@50:** 88.4% | **Inference Speed:** 18.2 ms  
-    - **Target Classes:** Workers in Danger Zone, Haul Trucks, Heavy Excavators, Tension Cracks, Rock Boulders
+    The server reports which detector actually ran. On Render's free instance, YOLOv8 is disabled to protect API availability;
+    that deployment performs a lightweight texture screen only and does **not** detect workers or equipment.
     """)
     
     y_col1, y_col2 = st.columns([1, 1])
@@ -1063,9 +1061,13 @@ elif nav == "AI Vision & YOLO":
                 )
                 rep.raise_for_status()
                 yolo_data = rep.json()
+                if yolo_data.get("model_notice"):
+                    st.warning(yolo_data["model_notice"])
+                else:
+                    st.success(f"Detection engine: {yolo_data.get('detection_engine', 'YOLOv8')}")
                 b64_img = yolo_data.get("annotated_image_base64", "")
                 if b64_img:
-                    st.image(base64.b64decode(b64_img), caption="YOLOv8 Annotated Detections", use_container_width=True)
+                    st.image(base64.b64decode(b64_img), caption="Annotated image screening result", use_container_width=True)
                 st.markdown(f"**Safety Assessment:** {yolo_data.get('safety_assessment')}")
                 dets = yolo_data.get("detections", [])
                 if dets:

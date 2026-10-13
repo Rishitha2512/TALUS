@@ -110,6 +110,27 @@ def test_workers_geofence_and_advanced_simulation():
     assert drift.status_code == 200
 
 
+def test_yolo_free_tier_texture_screen(monkeypatch):
+    from pathlib import Path
+    from backend import yolo_detector
+
+    monkeypatch.setenv("TALUS_YOLO_ENABLED", "false")
+    monkeypatch.setattr(
+        yolo_detector,
+        "get_yolo_model",
+        lambda: pytest.fail("YOLO model should not load when disabled"),
+    )
+    image_path = next((Path(ROOT_DIR) / "data" / "raw" / "images").rglob("*.jpg"))
+    with open(image_path, "rb") as image_file:
+        response = client.post("/yolo/detect", files={"file": (image_path.name, image_file, "image/jpeg")})
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["detection_engine"] == "texture_screen"
+    assert "does not detect people or equipment" in result["model_notice"]
+    assert result["annotated_image_base64"]
+
+
 def test_yolo_hazard_detection_and_tta():
     # Test TTA profiles and simulation
     prof = client.get("/tta/profiles")
@@ -133,4 +154,3 @@ def test_whisper_assistant_endpoint():
     assert r.status_code == 200
     res = r.json()
     assert "transcript" in res and "text" in res
-

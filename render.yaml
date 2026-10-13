@@ -8,6 +8,8 @@ services:
     envVars:
       - key: TALUS_CORS_ORIGINS
         value: "*"
+      - key: TALUS_YOLO_ENABLED
+        value: "false"
   - type: web
     name: talus-control-room
     runtime: docker
