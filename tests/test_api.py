@@ -54,7 +54,11 @@ def test_assistant_alert_scenario_and_system_endpoints():
     assert health.status_code == 200 and health.json().get("synthetic_data") is True
     created = client.post("/alerts/test", json={"sector": "S9", "level": 2, "reason": "unit test alert", "demo": True})
     assert created.status_code == 200
-    alert_id = created.json()["alert"]["id"]
+    created_data = created.json()
+    assert created_data["notice"] == "Demo alert only; no external notification is sent."
+    alert_id = created_data["alert"]["id"]
+    duplicate = client.post("/alerts/test", json={"sector": "S9", "level": 2, "reason": "unit test alert", "demo": True})
+    assert duplicate.status_code == 200 and duplicate.json()["created"] is False
     ack = client.post(f"/alerts/{alert_id}/ack", json={"acknowledged_by": "pytest"})
     assert ack.status_code == 200 and ack.json()["alert"]["status"] == "ACKNOWLEDGED"
 
@@ -129,5 +133,4 @@ def test_whisper_assistant_endpoint():
     assert r.status_code == 200
     res = r.json()
     assert "transcript" in res and "text" in res
-
 

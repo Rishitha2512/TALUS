@@ -1131,21 +1131,49 @@ elif nav == "Adaptive ML & TTA":
 elif nav == "Emergency & TARP":
     st.header("🛡 Emergency Console, TARP & TALUS AI Chatbot")
     st.caption("Trigger-Action-Response Plan hierarchy, audio sirens, worker geofence tracking, and conversational AI chatbot.")
+    st.info(
+        "Demo only: dispatch records an alert in this app's history; it does not notify workers or emergency services. "
+        "L1 = Advisory, L2 = Warning, L3 = Evacuate. L0 is normal and cannot be dispatched."
+    )
+    alert_feedback = st.session_state.pop("alert_dispatch_feedback", None)
+    if alert_feedback:
+        if alert_feedback["created"]:
+            st.success(alert_feedback["message"])
+        else:
+            st.info(alert_feedback["message"])
     
     t_c1, t_c2 = st.columns([1, 1])
     with t_c1:
         st.subheader("Dispatch TARP Alert")
         t_sec = st.selectbox("Target Sector", [s["sector_id"] for s in overview_data], index=3, key="t_alert_sec")
         t_lvl = st.select_slider("TARP Trigger Level", options=[0, 1, 2, 3], value=3, format_func=lambda x: {0: "L0 Normal", 1: "L1 Advisory", 2: "L2 Warning", 3: "L3 Evacuate"}[x])
-        t_reason = st.text_input("Alert Trigger Cause", "Radar velocity threshold exceeded (>25 mm/day)")
+        t_reason = st.text_input(
+            "Alert Trigger Cause",
+            "Radar velocity threshold exceeded (>25 mm/day)",
+            help="Describe the observation that led to this demo alert.",
+        )
         if st.button("DISPATCH TARP ALERT", type="primary", use_container_width=True):
-            try:
-                a_res = api_post("/alerts/test", {"sector": t_sec, "level": t_lvl, "reason": t_reason, "demo": True})
-                st.session_state["last_alert_id"] = a_res["alert"]["id"]
-                st.success(f"Dispatched TARP Alert #{a_res['alert']['id']} to Sector {t_sec}!")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Alert dispatch failed: {exc}")
+            if t_lvl == 0:
+                st.warning("L0 means normal conditions. Select L1, L2, or L3 to record a TARP alert.")
+            elif not t_reason.strip():
+                st.warning("Enter an alert trigger cause before dispatching.")
+            else:
+                try:
+                    a_res = api_post("/alerts/test", {"sector": t_sec, "level": t_lvl, "reason": t_reason.strip(), "demo": True})
+                    alert = a_res["alert"]
+                    st.session_state["last_alert_id"] = alert["id"]
+                    if a_res["created"]:
+                        message = f"TARP demo alert #{alert['id']} recorded for Sector {t_sec} at L{t_lvl}. It is now in Active Alarm History."
+                    else:
+                        message = f"Matching active alert #{alert['id']} already exists for Sector {t_sec} at L{t_lvl}; duplicate dispatch was suppressed."
+                    st.session_state["alert_dispatch_feedback"] = {
+                        "created": a_res["created"],
+                        "message": message,
+                    }
+                    api_get.clear()
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Alert dispatch failed: {exc}")
                 
     with t_c2:
         st.subheader("Active Alarm History")

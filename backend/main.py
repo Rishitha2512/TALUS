@@ -14,7 +14,7 @@ from backend.schemas import SectorPredictRequest, SectorPredictResponse
 from backend.predictor import predict_sector_risk, get_model_info
 from backend.database import get_sector_history, get_latest_mine_overview, init_db, get_data_summary
 from backend.advanced import (
-    init_alerts, list_alerts, create_alert, acknowledge_alert, resolve_alert,
+    init_alerts, list_alerts, create_alert, create_alert_with_status, acknowledge_alert, resolve_alert,
     parse_assistant, monte_carlo_pof, time_to_failure, classify_material,
     get_simulated_workers, tornado_sensitivity, geotechnical_recommendations, model_drift_analysis
 )
@@ -168,8 +168,12 @@ def alerts_history():
 
 @app.post("/alerts/test", summary="Create a demo/test alert")
 def alerts_test(request: AlertTestRequest):
-    alert = create_alert(request.sector.upper(), request.level, request.reason, request.demo)
-    return {"created": True, "alert": alert, "notice": "Demo alert only; no external notification is sent."}
+    alert, created = create_alert_with_status(request.sector.upper(), request.level, request.reason, request.demo)
+    return {
+        "created": created,
+        "alert": alert,
+        "notice": "Demo alert only; no external notification is sent.",
+    }
 
 @app.post("/alerts/{alert_id}/ack", summary="Acknowledge an active alert")
 def alerts_ack(alert_id: int, request: AlertAckRequest):

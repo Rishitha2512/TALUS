@@ -47,7 +47,7 @@ def list_alerts(active_only: bool = False):
         return [dict(r) for r in c.execute(sql).fetchall()]
 
 
-def create_alert(sector: str, level: int, reason: str, demo: bool = False):
+def create_alert_with_status(sector: str, level: int, reason: str, demo: bool = False):
     init_alerts()
     now = datetime.now().isoformat(timespec="seconds")
     # Hysteresis/debounce: do not create a duplicate active alert for same sector+level in 2 min.
@@ -56,9 +56,15 @@ def create_alert(sector: str, level: int, reason: str, demo: bool = False):
         if existing:
             created = datetime.fromisoformat(existing["created_at"])
             if datetime.now() - created < timedelta(minutes=2):
-                return dict(existing)
+                return dict(existing), False
         cur = c.execute("INSERT INTO alerts(sector,level,reason,created_at,demo) VALUES(?,?,?,?,?)", (sector, level, reason, now, int(demo)))
-        return dict(c.execute("SELECT * FROM alerts WHERE id=?", (cur.lastrowid,)).fetchone())
+        alert = dict(c.execute("SELECT * FROM alerts WHERE id=?", (cur.lastrowid,)).fetchone())
+        return alert, True
+
+
+def create_alert(sector: str, level: int, reason: str, demo: bool = False):
+    alert, _ = create_alert_with_status(sector, level, reason, demo)
+    return alert
 
 
 def acknowledge_alert(alert_id: int, who: str = "Engineer"):
