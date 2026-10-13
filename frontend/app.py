@@ -254,6 +254,22 @@ def get_3d_layout(fig, title: str = "", height: int = 420):
     )
     return fig
 
+def style_analytics_chart(fig, height: int = 340):
+    """Apply the shared dark, high-contrast style used by 2D analytics."""
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(8,13,24,0.55)",
+        font=dict(color="#dbeafe", family="Inter, sans-serif"),
+        margin=dict(l=18, r=18, t=48, b=18),
+        height=height,
+        hoverlabel=dict(bgcolor="#101a2b", bordercolor="#00d9f5"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    fig.update_xaxes(gridcolor="rgba(148,163,184,0.13)", zerolinecolor="rgba(148,163,184,0.25)")
+    fig.update_yaxes(gridcolor="rgba(148,163,184,0.13)", zerolinecolor="rgba(148,163,184,0.25)")
+    return fig
+
 # Check Backend API Health
 try:
     health_resp = api_get("/health")
@@ -1346,7 +1362,100 @@ elif nav == "Synthetic vs Real / Leakage Audit":
             confusion.index.name = "Actual synthetic class"
             st.subheader("Noise-free rule vs stored synthetic label")
             st.caption("Rows are stored labels; columns are noise-free rule classes.")
-            st.dataframe(confusion, use_container_width=True)
+            audit_chart_col, overlap_chart_col = st.columns([1.15, 0.85])
+            with audit_chart_col:
+                confusion_fig = go.Figure(go.Heatmap(
+                    z=confusion.to_numpy(),
+                    x=confusion.columns.tolist(),
+                    y=confusion.index.tolist(),
+                    text=confusion.to_numpy(),
+                    texttemplate="%{text}",
+                    colorscale=[[0, "#111827"], [0.5, "#075985"], [1, "#22d3ee"]],
+                    colorbar=dict(title="Records"),
+                    hovertemplate="Stored label: %{y}<br>Rule class: %{x}<br>Records: %{z}<extra></extra>",
+                ))
+                confusion_fig.update_layout(
+                    title="Confusion matrix · synthetic rows",
+                    xaxis_title="Noise-free rule class",
+                    yaxis_title="Stored synthetic label",
+                )
+                style_analytics_chart(confusion_fig, 380)
+                st.plotly_chart(confusion_fig, use_container_width=True, key="audit_confusion_heatmap")
+            with overlap_chart_col:
+                agreement_fig = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=float(audit_metrics["accuracy"]) * 100,
+                    number=dict(suffix="%", valueformat=".1f", font=dict(size=38, color="#f8fafc")),
+                    title=dict(text="Rule agreement<br><span style='font-size:12px;color:#94a3b8'>synthetic records only</span>"),
+                    gauge=dict(
+                        axis=dict(range=[0, 100], ticksuffix="%", tickcolor="#94a3b8"),
+                        bar=dict(color="#22d3ee"),
+                        bgcolor="#101a2b",
+                        bordercolor="rgba(148,163,184,0.25)",
+                        steps=[
+                            dict(range=[0, 60], color="#351722"),
+                            dict(range=[60, 85], color="#3b2b12"),
+                            dict(range=[85, 100], color="#103126"),
+                        ],
+                    ),
+                ))
+                agreement_fig.update_layout(
+                    template="plotly_dark",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(l=20, r=20, t=75, b=10),
+                    height=245,
+                )
+                st.plotly_chart(agreement_fig, use_container_width=True, key="audit_agreement_gauge")
+                score_inputs = audit["score_inputs_also_used_as_model_features"]
+                overlap_labels = [
+                    "Factor of safety",
+                    "Deformation rate",
+                    "Pore pressure",
+                    "Blast intensity",
+                    "Recent blasting",
+                ]
+                overlap_fig = go.Figure(go.Bar(
+                    x=[1] * len(score_inputs),
+                    y=overlap_labels[:len(score_inputs)],
+                    orientation="h",
+                    marker=dict(
+                        color=["#22d3ee", "#38bdf8", "#818cf8", "#a78bfa", "#f472b6"][:len(score_inputs)],
+                        line=dict(color="rgba(255,255,255,0.18)", width=1),
+                    ),
+                    text=["Used in synthetic label + model"] * len(score_inputs),
+                    textposition="inside",
+                    hovertemplate="%{y}<br>Direct input overlap<extra></extra>",
+                ))
+                overlap_fig.update_layout(
+                    title="Direct label-input overlap",
+                    xaxis=dict(visible=False, range=[0, 1.2]),
+                    yaxis=dict(autorange="reversed"),
+                    showlegend=False,
+                )
+                style_analytics_chart(overlap_fig, 300)
+                st.plotly_chart(overlap_fig, use_container_width=True, key="audit_feature_overlap")
+                st.caption(
+                    f"{len(score_inputs)} of {len(score_inputs)} score inputs are also model features; "
+                    "this is direct target leakage by construction, not a feature-importance score."
+                )
+
+            class_totals = confusion.sum(axis=1)
+            distribution_fig = go.Figure(go.Bar(
+                x=class_totals.index.tolist(),
+                y=class_totals.values.tolist(),
+                marker_color=["#34d399", "#fbbf24", "#fb923c", "#fb7185"],
+                text=class_totals.values.tolist(),
+                textposition="outside",
+                hovertemplate="Stored class: %{x}<br>Rows: %{y}<extra></extra>",
+            ))
+            distribution_fig.update_layout(
+                title="Stored synthetic class distribution",
+                xaxis_title="Stored class",
+                yaxis_title="Records",
+                showlegend=False,
+            )
+            style_analytics_chart(distribution_fig, 290)
+            st.plotly_chart(distribution_fig, use_container_width=True, key="audit_class_distribution")
             with st.expander("Per-record synthetic audit sample"):
                 rows_path = ROOT / "results" / "synthetic_label_audit_rows.csv"
                 if rows_path.is_file():
@@ -1366,71 +1475,219 @@ elif nav == "Synthetic vs Real / Leakage Audit":
     )
 
 elif nav == "Live Sensor Stream":
-    st.header("Live Synthetic Sensor Stream")
+    st.header("📡 Live Sensor Stream")
+    st.caption("A clear view of the WebSocket feed and generated displacement batches.")
     st.warning(
-        "This live feed is driven by a local synthetic sensor simulator. "
-        "It does not connect to a mine instrument or emergency dispatch service."
+        "DEMO / SYNTHETIC ONLY · This simulator is not connected to mine instruments "
+        "or an emergency dispatch service."
     )
-    st.caption(
-        "WebSocket updates appear in this panel as they arrive; telemetry is also "
-        "persisted with data-quality flags in the configured database."
-    )
-    api_url_json = json.dumps(API_URL)
-    st.components.v1.html(
-        f"""
-        <div style="font:14px sans-serif;background:#0d1422;color:#f8fafc;padding:16px;border-radius:10px">
-          <div style="display:flex;gap:10px;align-items:center">
-            <button id="connect" style="padding:8px 14px">Connect live feed</button>
-            <button id="simulate" style="padding:8px 14px">Generate synthetic sensor batch</button>
-            <span id="status">Disconnected</span>
-          </div>
-          <pre id="events" style="height:300px;overflow:auto;white-space:pre-wrap;margin-top:12px"></pre>
-        </div>
-        <script>
-          const api = {api_url_json};
-          const output = document.getElementById("events");
-          const status = document.getElementById("status");
-          let socket;
-          document.getElementById("connect").onclick = () => {{
-            const address = new URL(api);
-            address.protocol = address.protocol === "https:" ? "wss:" : "ws:";
-            address.pathname = "/ws/telemetry";
-            socket = new WebSocket(address.toString());
-            socket.onopen = () => status.textContent = "Connected";
-            socket.onclose = () => status.textContent = "Disconnected";
-            socket.onerror = () => status.textContent = "Stream connection error";
-            socket.onmessage = event => {{
-              const row = JSON.parse(event.data);
-              if (row.type === "telemetry") {{
-                output.textContent = JSON.stringify(row) + "\\n" + output.textContent;
-              }} else {{
-                status.textContent = row.type === "connected" ? "Connected (synthetic source)" : status.textContent;
+
+    sensor_controls, sensor_stream = st.columns([0.92, 1.08], gap="large")
+    sector_choices = [str(item.get("sector_id", "S1")) for item in overview_data] or ["S1"]
+    with sensor_controls:
+        st.subheader("Create a sensor batch")
+        with st.form("live_sensor_batch"):
+            sensor_sector = st.selectbox("Sector", sector_choices)
+            sensor_count = st.slider("Samples in batch", 10, 200, 60, step=10)
+            sensor_seed = st.number_input("Repeatable seed", 0, 999999, 42, step=1)
+            sensor_row1 = st.columns(2)
+            sensor_baseline = sensor_row1[0].number_input(
+                "Starting displacement (mm)", 0.0, 1000.0, 5.0, 0.5
+            )
+            sensor_drift = sensor_row1[1].number_input(
+                "Drift per sample (mm)", 0.0, 5.0, 0.03, 0.01, format="%.2f"
+            )
+            sensor_row2 = st.columns(2)
+            sensor_noise = sensor_row2[0].number_input(
+                "Noise (mm)", 0.0, 10.0, 0.1, 0.05, format="%.2f"
+            )
+            sensor_dropout = sensor_row2[1].slider(
+                "Dropout rate", 0.0, 0.30, 0.03, 0.01
+            )
+            sensor_outlier = st.slider("Injected outlier rate", 0.0, 0.20, 0.01, 0.01)
+            generate_batch = st.form_submit_button(
+                "⚡ Generate & publish batch",
+                use_container_width=True,
+                type="primary",
+                disabled=not connected,
+            )
+        if generate_batch:
+            try:
+                with st.spinner("Generating and persisting the synthetic batch…"):
+                    batch_result = api_post("/simulate/telemetry", {
+                        "sector_id": sensor_sector,
+                        "sample_count": sensor_count,
+                        "seed": int(sensor_seed),
+                        "baseline_mm": sensor_baseline,
+                        "drift_mm_per_sample": sensor_drift,
+                        "noise_std_mm": sensor_noise,
+                        "dropout_rate": sensor_dropout,
+                        "outlier_rate": sensor_outlier,
+                    })
+                st.session_state["sensor_last_batch"] = batch_result
+                st.success(
+                    f"Published {batch_result['readings_generated']} readings; "
+                    f"{batch_result['readings_persisted']} saved to the configured database."
+                )
+            except Exception as exc:
+                st.error(f"Could not generate sensor data: {exc}")
+        if not connected:
+            st.error("The API is offline; check the backend connection before generating a batch.")
+
+    with sensor_stream:
+        st.subheader("WebSocket telemetry")
+        api_url_json = json.dumps(API_URL)
+        st.components.v1.html(
+            f"""
+            <div style="font:14px Inter,system-ui,sans-serif;background:linear-gradient(145deg,#0d1728,#080d18);
+                color:#e2e8f0;padding:18px;border:1px solid rgba(34,211,238,.24);border-radius:16px">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px">
+                <div><div style="font-size:17px;font-weight:700">Telemetry channel</div>
+                  <div style="font-size:12px;color:#94a3b8">Incoming displacement · last 120 points</div></div>
+                <span id="status" style="padding:6px 10px;border-radius:99px;background:#3b1821;color:#fda4af">Connecting…</span>
+              </div>
+              <canvas id="chart" style="width:100%;height:245px"></canvas>
+              <div style="display:flex;justify-content:space-between;margin-top:8px;color:#94a3b8;font-size:12px">
+                <span id="count">0 updates</span><span id="latest">Waiting for readings</span>
+              </div>
+            </div>
+            <script>
+              const api = {api_url_json};
+              const canvas = document.getElementById("chart");
+              const ctx = canvas.getContext("2d");
+              const status = document.getElementById("status");
+              const points = [];
+              let socket;
+              function draw() {{
+                const ratio = window.devicePixelRatio || 1;
+                const rect = canvas.getBoundingClientRect();
+                canvas.width = rect.width * ratio;
+                canvas.height = rect.height * ratio;
+                ctx.scale(ratio, ratio);
+                const w = rect.width, h = rect.height, pad = {{l:38,r:12,t:14,b:24}};
+                ctx.clearRect(0,0,w,h);
+                ctx.font = "11px system-ui";
+                if (!points.length) {{
+                  ctx.fillStyle = "#94a3b8"; ctx.textAlign = "center";
+                  ctx.fillText("Generate a batch to see live readings", w/2, h/2);
+                  return;
+                }}
+                const values = points.map(p => p.value).filter(v => v !== null);
+                const lo = Math.min(...values), hi = Math.max(...values);
+                const span = Math.max(hi-lo, 0.05);
+                for (let i=0;i<4;i++) {{
+                  const y = pad.t + (h-pad.t-pad.b)*i/3;
+                  ctx.strokeStyle = "rgba(148,163,184,.15)"; ctx.beginPath();
+                  ctx.moveTo(pad.l,y); ctx.lineTo(w-pad.r,y); ctx.stroke();
+                  ctx.fillStyle="#94a3b8"; ctx.textAlign="right";
+                  ctx.fillText((hi-span*i/3).toFixed(2),pad.l-6,y+4);
+                }}
+                const xAt = i => pad.l + (w-pad.l-pad.r)*i/Math.max(1,points.length-1);
+                const yAt = v => pad.t + (h-pad.t-pad.b)*(hi-v)/span;
+                ctx.strokeStyle="#22d3ee"; ctx.lineWidth=2.5; ctx.beginPath();
+                let open=false;
+                points.forEach((p,i) => {{
+                  if (p.value === null) {{ open=false; return; }}
+                  if (!open) {{ ctx.moveTo(xAt(i),yAt(p.value)); open=true; }}
+                  else ctx.lineTo(xAt(i),yAt(p.value));
+                }});
+                ctx.stroke();
+                points.forEach((p,i) => {{
+                  if (p.value !== null && p.outlier) {{
+                    ctx.fillStyle="#fb7185"; ctx.beginPath(); ctx.arc(xAt(i),yAt(p.value),4,0,Math.PI*2); ctx.fill();
+                  }}
+                }});
               }}
-            }};
-          }};
-          document.getElementById("simulate").onclick = async () => {{
-            status.textContent = "Generating...";
-            try {{
-              const response = await fetch(api + "/simulate/telemetry", {{
-                method: "POST", headers: {{"Content-Type":"application/json"}},
-                body: JSON.stringify({{sector_id:"S1",sample_count:30,seed:Date.now() % 100000}})
-              }});
-              if (!response.ok) throw new Error(await response.text());
-              const result = await response.json();
-              status.textContent = result.notice + " (" + result.readings_persisted + " stored)";
-            }} catch (error) {{ status.textContent = "Simulation failed: " + error; }}
-          }};
-        </script>
-        """,
-        height=400,
-        scrolling=False,
-    )
+              function connect() {{
+                const address = new URL(api);
+                address.protocol = address.protocol === "https:" ? "wss:" : "ws:";
+                address.pathname = "/ws/telemetry"; address.search = "";
+                socket = new WebSocket(address.toString());
+                socket.onopen = () => {{ status.textContent="Connected"; status.style.background="#103126"; status.style.color="#6ee7b7"; }};
+                socket.onmessage = event => {{
+                  const row = JSON.parse(event.data);
+                  if (row.type !== "telemetry") return;
+                  points.push({{value: row.displacement_mm, outlier: Boolean(row.outlier_injected)}});
+                  if (points.length > 120) points.shift();
+                  document.getElementById("count").textContent = points.length + " updates";
+                  document.getElementById("latest").textContent = row.displacement_mm === null
+                    ? "Latest sample: dropout" : "Latest: " + Number(row.displacement_mm).toFixed(2) + " mm";
+                  draw();
+                }};
+                socket.onclose = () => {{
+                  status.textContent="Reconnecting…"; status.style.background="#3b2b12"; status.style.color="#fcd34d";
+                  setTimeout(connect,3000);
+                }};
+                socket.onerror = () => socket.close();
+              }}
+              window.addEventListener("resize",draw);
+              connect();
+            </script>
+            """,
+            height=365,
+            scrolling=False,
+        )
+
+    batch = st.session_state.get("sensor_last_batch")
+    if batch:
+        readings = batch.get("readings", [])
+        frame = pd.DataFrame(readings)
+        if not frame.empty:
+            st.markdown("---")
+            st.subheader(f"Latest batch · {batch.get('sector_id', 'unknown sector')}")
+            valid_values = frame["displacement_mm"].dropna()
+            missing_count = int(frame["displacement_mm"].isna().sum())
+            outlier_count = int(frame.get("outlier_injected", pd.Series(dtype=bool)).sum())
+            batch_kpis = st.columns(4)
+            batch_kpis[0].metric("Readings", f"{len(frame):,}", "synthetic samples")
+            batch_kpis[1].metric(
+                "Latest displacement",
+                f"{valid_values.iloc[-1]:.2f} mm" if not valid_values.empty else "No valid reading",
+            )
+            batch_kpis[2].metric("Dropouts", missing_count, f"{missing_count / len(frame):.1%} of batch")
+            batch_kpis[3].metric("Injected outliers", outlier_count, "simulator-tagged")
+
+            displacement_fig = go.Figure()
+            displacement_fig.add_trace(go.Scatter(
+                x=frame["sample_index"],
+                y=frame["displacement_mm"],
+                mode="lines+markers",
+                name="Displacement",
+                connectgaps=False,
+                line=dict(color="#22d3ee", width=2.5),
+                marker=dict(size=5, color="#67e8f9"),
+                hovertemplate="Sample %{x}<br>Displacement %{y:.3f} mm<extra></extra>",
+            ))
+            outliers = frame[
+                frame["outlier_injected"].fillna(False)
+                & frame["displacement_mm"].notna()
+            ]
+            if not outliers.empty:
+                displacement_fig.add_trace(go.Scatter(
+                    x=outliers["sample_index"],
+                    y=outliers["displacement_mm"],
+                    mode="markers",
+                    name="Injected outlier",
+                    marker=dict(color="#fb7185", size=11, symbol="x"),
+                    hovertemplate="Injected outlier<br>Sample %{x}<br>%{y:.3f} mm<extra></extra>",
+                ))
+            displacement_fig.update_layout(
+                title="Displacement response · gaps remain visible",
+                xaxis_title="Sample index",
+                yaxis_title="Displacement (mm)",
+            )
+            style_analytics_chart(displacement_fig, 390)
+            st.plotly_chart(displacement_fig, use_container_width=True, key="sensor_batch_displacement")
+            st.caption(batch.get("notice", "DEMO/SYNTHETIC"))
+            with st.expander("Inspect generated records"):
+                st.dataframe(frame, use_container_width=True, hide_index=True)
+
     st.info(
-        "How this works: seeded displacement samples combine linear drift, normal "
-        "noise, injected outliers and dropouts; a WebSocket broadcasts the stored "
-        "records to connected clients. Assumptions: local simulator models one "
-        "displacement sensor. Limitations: not MQTT-ingested live field data, no "
-        "sensor calibration, and no verified failure labels."
+        "How this works: the button calls the API simulator, which combines baseline "
+        "displacement, linear drift, normal noise, injected outliers and dropouts. "
+        "Generated readings are sent to the WebSocket and persisted by the API. "
+        "Assumption: one synthetic displacement sensor per batch. Limitation: no "
+        "real sensor calibration, field data, or verified failure labels."
     )
 
 elif nav == "Engineering Research":
@@ -1439,8 +1696,8 @@ elif nav == "Engineering Research":
         "Offline research/screening utilities only. Outputs are not mine-specific "
         "design values, calibrated forecasts, or operating instructions."
     )
-    tab_le, tab_prob, tab_hydro = st.tabs(
-        ["Limit equilibrium", "Uncertainty & alarms", "Rock mass & infiltration"]
+    tab_le, tab_prob, tab_hydro, tab_kin = st.tabs(
+        ["🧭 Limit equilibrium", "📈 Uncertainty & alarms", "🪨 Rock mass & infiltration", "🧱 Kinematics"]
     )
     with tab_le:
         st.subheader("Bishop simplified and uncorrected Janbu")
@@ -1464,9 +1721,83 @@ elif nav == "Engineering Research":
         if run_limit_eq:
             try:
                 slice_data = json.loads(slices_text)
-                st.json(api_post("/research/limit-equilibrium", {"slices": slice_data}))
+                result = api_post("/research/limit-equilibrium", {"slices": slice_data})
+                st.session_state["research_limit_result"] = {
+                    "result": result,
+                    "slices": slice_data,
+                }
             except Exception as exc:
                 st.error(f"Limit-equilibrium calculation failed: {exc}")
+        saved_limit = st.session_state.get("research_limit_result")
+        if saved_limit:
+            result = saved_limit["result"]
+            slices = saved_limit["slices"]
+            metric_cols = st.columns(2)
+            metric_cols[0].metric(
+                "Bishop simplified FoS",
+                f"{result['bishop_simplified_fos']:.3f}",
+                "moment-equilibrium method",
+            )
+            metric_cols[1].metric(
+                "Janbu uncorrected FoS",
+                f"{result['janbu_simplified_uncorrected_fos']:.3f}",
+                "no empirical correction factor",
+            )
+            chart_cols = st.columns([1, 1.2])
+            with chart_cols[0]:
+                fos_fig = go.Figure(go.Bar(
+                    x=["Bishop simplified", "Janbu uncorrected"],
+                    y=[
+                        result["bishop_simplified_fos"],
+                        result["janbu_simplified_uncorrected_fos"],
+                    ],
+                    marker_color=["#22d3ee", "#a78bfa"],
+                    text=[
+                        f"{result['bishop_simplified_fos']:.3f}",
+                        f"{result['janbu_simplified_uncorrected_fos']:.3f}",
+                    ],
+                    textposition="outside",
+                    hovertemplate="%{x}<br>FoS %{y:.3f}<extra></extra>",
+                ))
+                fos_fig.update_layout(
+                    title="Method comparison · FoS",
+                    yaxis_title="Factor of Safety",
+                    showlegend=False,
+                )
+                fos_fig.add_hline(y=1.0, line_dash="dash", line_color="#fb7185",
+                                  annotation_text="FoS = 1.0 screening line")
+                style_analytics_chart(fos_fig, 340)
+                st.plotly_chart(fos_fig, use_container_width=True, key="research_limit_fos")
+            with chart_cols[1]:
+                slice_fig = go.Figure(go.Bar(
+                    x=[f"Slice {index + 1}" for index in range(len(slices))],
+                    y=[item["weight_kn"] for item in slices],
+                    marker=dict(
+                        color=[item["base_angle_deg"] for item in slices],
+                        colorscale="Turbo",
+                        colorbar=dict(title="Base angle<br>(°)"),
+                        line=dict(color="rgba(255,255,255,0.18)", width=1),
+                    ),
+                    customdata=[
+                        [item["base_angle_deg"], item["pore_pressure_kpa"], item["width_m"]]
+                        for item in slices
+                    ],
+                    hovertemplate=(
+                        "%{x}<br>Weight: %{y:.1f} kN"
+                        "<br>Base angle: %{customdata[0]:.1f}°"
+                        "<br>Pore pressure: %{customdata[1]:.1f} kPa"
+                        "<br>Width: %{customdata[2]:.2f} m<extra></extra>"
+                    ),
+                ))
+                slice_fig.update_layout(
+                    title="Entered slice profile · color = base angle",
+                    xaxis_title="Input slice",
+                    yaxis_title="Weight (kN)",
+                    showlegend=False,
+                )
+                style_analytics_chart(slice_fig, 340)
+                st.plotly_chart(slice_fig, use_container_width=True, key="research_slice_profile")
+            st.caption(result.get("assumption", ""))
         st.info(
             "How this works: Bishop uses iterative m_alpha terms in overall "
             "moment equilibrium; uncorrected Janbu uses a simplified "
@@ -1486,12 +1817,111 @@ elif nav == "Engineering Research":
             run_reliability = st.form_submit_button("Compare Monte Carlo and FORM")
         if run_reliability:
             try:
-                st.json(api_post(
-                    "/research/reliability",
-                    {"factor_of_safety_mean": fos_mean, "factor_of_safety_standard_deviation": fos_std, "sample_count": mc_samples},
-                ))
+                st.session_state["research_reliability_result"] = {
+                    "result": api_post(
+                        "/research/reliability",
+                        {
+                            "factor_of_safety_mean": fos_mean,
+                            "factor_of_safety_standard_deviation": fos_std,
+                            "sample_count": mc_samples,
+                        },
+                    ),
+                    "mean": float(fos_mean),
+                    "standard_deviation": float(fos_std),
+                }
             except Exception as exc:
                 st.error(f"Reliability analysis failed: {exc}")
+        saved_reliability = st.session_state.get("research_reliability_result")
+        if saved_reliability:
+            reliability_result = saved_reliability["result"]
+            reliability_metrics = st.columns(3)
+            reliability_metrics[0].metric(
+                "Monte Carlo PoF",
+                f"{reliability_result['monte_carlo_probability_of_failure']:.2%}",
+                "sampled FoS < 1.0",
+            )
+            reliability_metrics[1].metric(
+                "FORM reliability index β",
+                f"{reliability_result['form_reliability_index_beta']:.3f}",
+                "1D normal approximation",
+            )
+            reliability_metrics[2].metric(
+                "FORM-implied PoF",
+                f"{reliability_result['normal_approximation_probability_from_beta']:.2%}",
+                "normal tail from β",
+            )
+            reliability_chart_cols = st.columns(2)
+            with reliability_chart_cols[0]:
+                mean_value = saved_reliability["mean"]
+                std_value = saved_reliability["standard_deviation"]
+                threshold = 1.0
+                x_values = np.linspace(
+                    min(mean_value - 4 * std_value, threshold - std_value),
+                    mean_value + 4 * std_value,
+                    240,
+                )
+                density = np.exp(-0.5 * ((x_values - mean_value) / std_value) ** 2)
+                density /= std_value * np.sqrt(2 * np.pi)
+                density_fig = go.Figure()
+                fail_mask = x_values <= threshold
+                density_fig.add_trace(go.Scatter(
+                    x=x_values[fail_mask],
+                    y=density[fail_mask],
+                    mode="lines",
+                    line=dict(color="#fb7185", width=2),
+                    fill="tozeroy",
+                    fillcolor="rgba(251,113,133,0.25)",
+                    name="FoS below 1.0",
+                    hovertemplate="FoS %{x:.2f}<br>Density %{y:.3f}<extra></extra>",
+                ))
+                density_fig.add_trace(go.Scatter(
+                    x=x_values[~fail_mask],
+                    y=density[~fail_mask],
+                    mode="lines",
+                    line=dict(color="#22d3ee", width=2),
+                    fill="tozeroy",
+                    fillcolor="rgba(34,211,238,0.13)",
+                    name="FoS at/above 1.0",
+                    hovertemplate="FoS %{x:.2f}<br>Density %{y:.3f}<extra></extra>",
+                ))
+                density_fig.add_vline(
+                    x=threshold, line_dash="dash", line_color="#fbbf24",
+                    annotation_text="Failure threshold = 1.0",
+                )
+                density_fig.update_layout(
+                    title="Assumed normal FoS distribution",
+                    xaxis_title="Factor of Safety",
+                    yaxis_title="Probability density",
+                )
+                style_analytics_chart(density_fig, 350)
+                st.plotly_chart(density_fig, use_container_width=True, key="research_fos_distribution")
+            with reliability_chart_cols[1]:
+                convergence = reliability_result["convergence"]
+                convergence_fig = go.Figure(go.Scatter(
+                    x=[point["samples"] for point in convergence],
+                    y=[point["probability_of_failure"] for point in convergence],
+                    mode="lines+markers",
+                    line=dict(color="#a78bfa", width=3),
+                    marker=dict(size=10, color="#c4b5fd"),
+                    customdata=[
+                        [point["probability_of_failure"] * 100]
+                        for point in convergence
+                    ],
+                    hovertemplate="%{x:,} samples<br>Estimated PoF %{customdata[0]:.2f}%<extra></extra>",
+                    name="Monte Carlo",
+                ))
+                convergence_fig.update_layout(
+                    title="Monte Carlo estimate as sample count grows",
+                    xaxis_title="Samples (log scale)",
+                    yaxis_title="Estimated probability of failure",
+                )
+                convergence_fig.update_xaxes(type="log")
+                style_analytics_chart(convergence_fig, 350)
+                st.plotly_chart(convergence_fig, use_container_width=True, key="research_pof_convergence")
+            st.caption(
+                f"Reproducible run seed: {reliability_result['seed']:,}. "
+                "Convergence values are cumulative estimates from the same seeded run."
+            )
         st.caption(
             "How this works: Monte Carlo counts sampled FoS values below 1.0; "
             "one-dimensional FORM computes the standardized distance to that "
@@ -1545,12 +1975,50 @@ elif nav == "Engineering Research":
             run_hb = st.form_submit_button("Fit equivalent Mohr-Coulomb")
         if run_hb:
             try:
-                st.json(api_post("/research/hoek-brown", {
-                    "intact_ucs_mpa": hb_ucs, "mi": hb_mi, "gsi": hb_gsi,
-                    "disturbance_factor": hb_d, "sigma3_max_mpa": hb_sigma3,
-                }))
+                st.session_state["research_hoek_brown_result"] = {
+                    "result": api_post("/research/hoek-brown", {
+                        "intact_ucs_mpa": hb_ucs, "mi": hb_mi, "gsi": hb_gsi,
+                        "disturbance_factor": hb_d, "sigma3_max_mpa": hb_sigma3,
+                    }),
+                    "sigma3_max_mpa": float(hb_sigma3),
+                }
             except Exception as exc:
                 st.error(f"Hoek-Brown conversion failed: {exc}")
+        saved_hb = st.session_state.get("research_hoek_brown_result")
+        if saved_hb:
+            hb_result = saved_hb["result"]
+            hb_cols = st.columns(2)
+            hb_cols[0].metric(
+                "Equivalent cohesion",
+                f"{hb_result['equivalent_cohesion_kpa']:.1f} kPa",
+            )
+            hb_cols[1].metric(
+                "Equivalent friction angle",
+                f"{hb_result['equivalent_friction_angle_deg']:.2f}°",
+            )
+            normal_stress = np.linspace(0, saved_hb["sigma3_max_mpa"], 100)
+            shear_stress = (
+                hb_result["equivalent_cohesion_kpa"] / 1000.0
+                + normal_stress * np.tan(np.radians(hb_result["equivalent_friction_angle_deg"]))
+            )
+            envelope_fig = go.Figure(go.Scatter(
+                x=normal_stress,
+                y=shear_stress,
+                mode="lines",
+                line=dict(color="#c084fc", width=3),
+                fill="tozeroy",
+                fillcolor="rgba(192,132,252,0.12)",
+                name="Equivalent Mohr-Coulomb line",
+                hovertemplate="Normal stress %{x:.3f} MPa<br>Shear strength %{y:.3f} MPa<extra></extra>",
+            ))
+            envelope_fig.update_layout(
+                title="Equivalent Mohr-Coulomb shear envelope",
+                xaxis_title="Normal stress (MPa)",
+                yaxis_title="Shear strength (MPa)",
+            )
+            style_analytics_chart(envelope_fig, 320)
+            st.plotly_chart(envelope_fig, use_container_width=True, key="research_hb_envelope")
+            st.caption(hb_result.get("assumption", ""))
         st.caption(
             "How this works: computes the Hoek-Brown envelope and least-squares "
             "fits a Mohr-Coulomb line up to the selected confinement. Assumption: "
@@ -1568,19 +2036,158 @@ elif nav == "Engineering Research":
             run_infiltration = st.form_submit_button("Estimate cumulative infiltration")
         if run_infiltration:
             try:
-                st.json(api_post("/research/infiltration", {
-                    "rainfall_mm": rain, "duration_hours": duration,
-                    "saturated_conductivity_mm_h": conductivity,
-                    "suction_head_mm": suction, "moisture_deficit": moisture,
-                }))
+                st.session_state["research_infiltration_result"] = {
+                    "result": api_post("/research/infiltration", {
+                        "rainfall_mm": rain, "duration_hours": duration,
+                        "saturated_conductivity_mm_h": conductivity,
+                        "suction_head_mm": suction, "moisture_deficit": moisture,
+                    }),
+                    "rainfall_mm": float(rain),
+                }
             except Exception as exc:
                 st.error(f"Infiltration estimate failed: {exc}")
+        saved_infiltration = st.session_state.get("research_infiltration_result")
+        if saved_infiltration:
+            infiltration = float(saved_infiltration["result"]["infiltration_mm"])
+            rainfall_input = saved_infiltration["rainfall_mm"]
+            balance_fig = go.Figure()
+            balance_fig.add_trace(go.Bar(
+                name="Estimated infiltration",
+                x=["Rainfall water balance"],
+                y=[infiltration],
+                marker_color="#22d3ee",
+                hovertemplate="Estimated infiltration: %{y:.2f} mm<extra></extra>",
+            ))
+            balance_fig.add_trace(go.Bar(
+                name="Not infiltrated in this estimate",
+                x=["Rainfall water balance"],
+                y=[max(0.0, rainfall_input - infiltration)],
+                marker_color="#334155",
+                hovertemplate="Not infiltrated: %{y:.2f} mm<extra></extra>",
+            ))
+            balance_fig.update_layout(
+                title="Rainfall partition · Green-Ampt estimate",
+                barmode="stack",
+                xaxis_title="",
+                yaxis_title="Water depth (mm)",
+                legend=dict(orientation="h", y=1.12, x=0),
+            )
+            style_analytics_chart(balance_fig, 300)
+            st.plotly_chart(balance_fig, use_container_width=True, key="research_infiltration_balance")
+            st.metric("Estimated cumulative infiltration", f"{infiltration:.2f} mm")
+            st.caption(
+                "The remainder is labeled “not infiltrated,” not runoff: routing is "
+                "outside this simplified model."
+            )
+            st.caption(saved_infiltration["result"].get("assumption", ""))
         st.caption(
             "How this works: explicit steps integrate Green-Ampt capacity and cap "
             "infiltration at available rain. Assumptions: homogeneous soil and "
             "ponded infiltration. Limitation: no runoff, layering, preferential "
             "flow, or calibrated pore-pressure response."
         )
+
+    with tab_kin:
+        st.subheader("Planar sliding geometry screen")
+        st.caption(
+            "Compare slope-face and joint orientation, daylighting, and the friction "
+            "limit before interpreting the simple feasibility result."
+        )
+        with st.form("research_planar_kinematics"):
+            kin_left, kin_right = st.columns(2)
+            with kin_left:
+                slope_dip = st.number_input("Slope face dip (°)", 0.0, 89.0, 55.0, 1.0)
+                slope_direction = st.number_input("Slope dip direction (°)", 0.0, 359.0, 90.0, 1.0)
+            with kin_right:
+                joint_dip = st.number_input("Joint dip (°)", 0.0, 89.0, 35.0, 1.0)
+                joint_direction = st.number_input("Joint dip direction (°)", 0.0, 359.0, 100.0, 1.0)
+            kin_friction = st.number_input("Friction angle (°)", 0.0, 89.0, 25.0, 1.0)
+            run_kinematics = st.form_submit_button(
+                "Screen planar kinematics",
+                type="primary",
+                use_container_width=True,
+            )
+        if run_kinematics:
+            try:
+                st.session_state["research_kinematics_result"] = {
+                    "result": api_post("/research/kinematics/planar", {
+                        "slope_dip_deg": slope_dip,
+                        "slope_dip_direction_deg": slope_direction,
+                        "joint_dip_deg": joint_dip,
+                        "joint_dip_direction_deg": joint_direction,
+                        "friction_angle_deg": kin_friction,
+                    }),
+                    "slope_dip_deg": float(slope_dip),
+                    "slope_direction_deg": float(slope_direction),
+                    "joint_dip_deg": float(joint_dip),
+                    "joint_direction_deg": float(joint_direction),
+                    "friction_angle_deg": float(kin_friction),
+                }
+            except Exception as exc:
+                st.error(f"Kinematic screen failed: {exc}")
+        saved_kinematics = st.session_state.get("research_kinematics_result")
+        if saved_kinematics:
+            kin_result = saved_kinematics["result"]
+            feasible = bool(kin_result["planar_feasible_screen"])
+            angular_gap = abs(
+                (saved_kinematics["slope_direction_deg"] - saved_kinematics["joint_direction_deg"] + 180)
+                % 360 - 180
+            )
+            result_cols = st.columns(3)
+            result_cols[0].metric("Screen result", "POTENTIALLY FEASIBLE" if feasible else "NOT FEASIBLE")
+            result_cols[1].metric("Direction difference", f"{angular_gap:.1f}°", "acute angular distance")
+            result_cols[2].metric(
+                "Friction check",
+                "Joint dip > friction" if saved_kinematics["joint_dip_deg"] > saved_kinematics["friction_angle_deg"] else "Below friction limit",
+            )
+            orientation_fig = go.Figure()
+            for name, dip, direction, color in [
+                (
+                    "Slope face",
+                    saved_kinematics["slope_dip_deg"],
+                    saved_kinematics["slope_direction_deg"],
+                    "#22d3ee",
+                ),
+                (
+                    "Joint plane",
+                    saved_kinematics["joint_dip_deg"],
+                    saved_kinematics["joint_direction_deg"],
+                    "#fb7185",
+                ),
+            ]:
+                orientation_fig.add_trace(go.Scatterpolar(
+                    r=[0, dip],
+                    theta=[direction, direction],
+                    mode="lines+markers+text",
+                    name=name,
+                    line=dict(color=color, width=4),
+                    marker=dict(size=[5, 12], color=color),
+                    text=["", f"{name}<br>{dip:.0f}° / {direction:.0f}°"],
+                    textposition="top center",
+                    hovertemplate=f"{name}<br>Dip %{{r:.1f}}°<br>Dip direction %{{theta:.1f}}°<extra></extra>",
+                ))
+            orientation_fig.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="rgba(0,0,0,0)",
+                height=390,
+                margin=dict(l=35, r=35, t=55, b=20),
+                title="Orientation view · radial distance represents dip",
+                polar=dict(
+                    bgcolor="rgba(8,13,24,0.55)",
+                    radialaxis=dict(range=[0, 90], title="Dip (°)", gridcolor="rgba(148,163,184,0.2)"),
+                    angularaxis=dict(direction="clockwise", rotation=90, gridcolor="rgba(148,163,184,0.2)"),
+                ),
+                legend=dict(orientation="h", y=1.05, x=0),
+            )
+            st.plotly_chart(orientation_fig, use_container_width=True, key="research_kinematic_orientation")
+            st.caption(kin_result.get("assumption", ""))
+            st.info(
+                "How this works: a planar screen requires direction difference ≤20°, "
+                "friction angle < joint dip < slope dip. Assumption: one persistent "
+                "joint plane. Limitation: this polar orientation view is not a "
+                "stereonet and omits cohesion, water pressure, lateral restraint, "
+                "and wedge/toppling modes."
+            )
 
 # Mandatory Disclaimer Footer
 st.markdown("""
